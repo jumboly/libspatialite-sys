@@ -1,0 +1,49 @@
+[package]
+name        = "libspatialite-sys"
+version     = "0.0.1"
+edition     = "2021"
+rust-version = "1.75"
+authors     = ["jumboly <jumboly@gmail.com>"]
+license     = "MIT OR Apache-2.0"
+description = "Low-level FFI bindings and bundled build of libspatialite (SpatiaLite SQLite extension)"
+repository  = "https://github.com/jumboly/libspatialite-sys"
+readme      = "README.md"
+keywords    = ["spatialite", "sqlite", "geospatial", "gis", "ffi"]
+categories  = ["external-ffi-bindings", "science::geo"]
+# Declare the `links` key so Cargo's duplicate-link-name detection prevents
+# multiple libspatialite copies from being statically linked into a single binary.
+links       = "spatialite"
+# Once the bundled feature lands, narrow the publish set with `include = [...]`
+# so the crates.io tarball stays under the size limit.
+exclude     = ["/.github/", "/scripts/"]
+
+[features]
+# Default: headers + FFI declarations only. Library resolution is left to the
+# consumer (e.g. `rusqlite::Connection::load_extension("mod_spatialite")` for
+# dynamic loading, or pkg-config / explicit link search for static system libs).
+default        = []
+
+# Build libspatialite from vendored source via `cc::Build`, statically linked
+# alongside GEOS / PROJ / zlib (pulled as build-deps when this feature is on).
+# Tested in CI on Linux and macOS. Windows MSVC has known upstream-source
+# incompatibilities; use `bundled-vcpkg` instead. Implementation lands in a
+# follow-up commit.
+bundled        = []
+
+# Resolve libspatialite via vcpkg (`vcpkg install libspatialite:x64-windows-static-md`)
+# for Windows MSVC. The vcpkg port carries upstream-compatibility patches that
+# avoid the MSVC parser issues hit by the in-tree `bundled` path. Implementation
+# lands in a follow-up commit.
+bundled-vcpkg  = []
+
+[dependencies]
+# Forwards the SQLite header path (`sqlite3.h` / `sqlite3ext.h`) to our build.rs
+# via Cargo's `links = "sqlite3"` => `DEP_SQLITE3_INCLUDE` propagation. Even
+# though we never call into `libsqlite3-sys` from Rust, declaring it as a direct
+# dependency is the canonical way to receive `DEP_SQLITE3_INCLUDE` in our build
+# script.
+libsqlite3-sys = { version = "0.28", features = ["bundled"] }
+
+[build-dependencies]
+# Placeholder. The `bundled` and `bundled-vcpkg` feature implementations will
+# add cc / vcpkg / geos-src / proj-sys / libz-sys here.

@@ -1,0 +1,88 @@
+This crate (libspatialite-sys) bundles libspatialite under the `bundled`
+Cargo feature (in subsequent commits). When that feature is enabled, the
+bundled C source is included in-tree under `vendor/libspatialite-<version>/`
+and is statically linked into the resulting binary by `build.rs` via the
+`cc` crate.
+
+The crate metadata itself (Cargo.toml, build.rs, src/lib.rs, README.md, etc.)
+is dual-licensed under MIT OR Apache-2.0. The bundled libspatialite source
+carries its own (separate) licenses described below; static linking
+combines those terms with the resulting binary.
+
+================================================================================
+libspatialite (bundled under `bundled` feature)
+================================================================================
+
+Upstream:       https://www.gaia-gis.it/gaia-sins/libspatialite-sources/
+Author:         Alessandro Furieri <a.furieri@lqt.it>
+Copyright (C):  2008-2023 Alessandro Furieri and SpatiaLite contributors.
+
+License: triple-licensed under MPL 1.1 / GPL 2.0 / LGPL 2.1.
+See `vendor/libspatialite-<version>/COPYING` for the full text of all three
+licenses (vendored alongside the source).
+
+This crate links libspatialite STATICALLY when the `bundled` feature is
+enabled. Under the LGPL 2.1 option, distributors of resulting binaries are
+expected to either:
+
+  (a) provide the recipient with the means to relink the binary against a
+      modified libspatialite (typically by shipping the .o files of all
+      modules that link directly with libspatialite, or by providing the
+      crate consumer's source code so the recipient can rebuild), or
+  (b) license the resulting binary under MPL 1.1 or GPL 2.0 instead.
+
+Distributors should consult the LGPL 2.1 text for the exact requirements.
+libspatialite-sys itself is dual-licensed MIT OR Apache-2.0; combining it
+with the bundled libspatialite via static linking puts the resulting binary
+under the additional terms of one of the libspatialite licenses (per
+recipient choice).
+
+================================================================================
+GEOS (transitively linked under `bundled` feature)
+================================================================================
+
+When the `bundled` feature is enabled, libspatialite is linked against
+libgeos / libgeos_c, which is built from C/C++ source by the `geos-src`
+crate (declared as a build-dependency by libspatialite-sys at bundled-feature
+activation time).
+
+GEOS is licensed under LGPL 2.1. Static linking obligations apply as
+described in the libspatialite section above.
+
+================================================================================
+PROJ (transitively linked under `bundled` feature)
+================================================================================
+
+When the `bundled` feature is enabled, libspatialite is linked against
+libproj, which is built from C source by the `proj-sys` crate (declared
+as a build-dependency by libspatialite-sys at bundled-feature activation time).
+
+PROJ is licensed under the X/MIT License (a permissive, BSD-style license).
+
+================================================================================
+zlib (transitively linked under `bundled` feature)
+================================================================================
+
+libspatialite's `gg_relations.c::evalGeosCache` requires zlib's `crc32`.
+The `bundled` feature pulls `libz-sys` to build / link a vendored zlib
+on all 3 OS (Linux / macOS / Windows). zlib is licensed under the zlib
+license (a permissive license).
+
+================================================================================
+SQLite headers (header-only at build time)
+================================================================================
+
+This crate consumes SQLite headers via `libsqlite3-sys` (`DEP_SQLITE3_INCLUDE`).
+SQLite is in the public domain. See https://www.sqlite.org/copyright.html .
+
+================================================================================
+vcpkg port (under `bundled-vcpkg` feature, Windows MSVC)
+================================================================================
+
+The `bundled-vcpkg` feature does not vendor libspatialite source in this
+crate. Instead, it relies on the user-provisioned vcpkg installation
+(`vcpkg install libspatialite:x64-windows-static-md`). The vcpkg port may
+apply patches to upstream libspatialite source; refer to the vcpkg
+repository for those patches and their licenses (typically MIT for the
+port itself, with the original libspatialite license still applying to the
+underlying source).

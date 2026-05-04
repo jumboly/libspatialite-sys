@@ -1,0 +1,11 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local vcpkg installation tree (for `bundled-vcpkg` testing)
+/vcpkg_installed/

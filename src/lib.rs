@@ -1,0 +1,86 @@
+//! Low-level FFI bindings to libspatialite (the SpatiaLite SQLite extension).
+//!
+//! This crate exposes only the small set of `extern "C"` functions needed to
+//! attach libspatialite to a SQLite connection. The hundreds of SpatiaLite
+//! SQL functions (`AsBinary`, `GeomFromWKB`, `ST_*`, `Transform`, ...) are
+//! invoked through SQL after the connection has been initialized, so they do
+//! not need direct Rust FFI declarations.
+//!
+//! ## Cargo features
+//!
+//! - default: declarations only. Library resolution and runtime loading are
+//!   left to the consumer.
+//! - `bundled` (added in a follow-up commit): compile the vendored
+//!   libspatialite source with `cc::Build` and statically link it.
+//! - `bundled-vcpkg` (added in a follow-up commit): resolve libspatialite
+//!   from a vcpkg installation (recommended for Windows MSVC).
+//!
+//! ## Static link initialization sequence
+//!
+//! When libspatialite is linked statically, it is built without
+//! `LOADABLE_EXTENSION`, so `sqlite3_modspatialite_init` is not available.
+//! Callers initialize the connection with a three-step sequence instead:
+//!
+//! 1. `spatialite_initialize()` — once per process.
+//! 2. `spatialite_alloc_connection()` — once per `sqlite3*` connection.
+//! 3. `spatialite_init_ex(db, cache, verbose)` — registers the cache with
+//!    the connection. The cache is freed automatically by libspatialite when
+//!    `sqlite3_close` runs; do not call `spatialite_cleanup_ex` from Rust
+//!    (it would double-free).
+//!
+//! ## Dynamic loading
+//!
+//! When `mod_spatialite.{so,dylib,dll}` is loaded via SQLite's
+//! `load_extension` mechanism, SQLite calls `sqlite3_modspatialite_init`
+//! itself. Most consumers go through `rusqlite::Connection::load_extension`
+//! and never need to reference the FFI symbols below directly.
+
+#![deny(unsafe_op_in_unsafe_fn)]
+
+use std::os::raw::{c_int, c_void};
+
+/// Opaque handle to a SQLite connection (`sqlite3 *`).
+///
+/// Layout-compatible with `libsqlite3_sys::sqlite3`. Consumers that already
+/// depend on `libsqlite3-sys` can cast freely between the two pointer types.
+/// We re-declare the type here to keep the crate self-contained for users
+/// who interact with libspatialite through other SQLite bindings.
+#[repr(C)]
+pub struct sqlite3 {
+    _private: [u8; 0],
+}
+
+extern "C" {
+    /// Process-global libspatialite initialization. Sets up GEOS / PROJ
+    /// global state. Call once per process; libspatialite guards against
+    /// repeated invocations internally, but it is cleaner to gate it on
+    /// the caller side (e.g. `std::sync::Once`).
+    pub fn spatialite_initialize();
+
+    /// Allocate a per-connection SpatiaLite cache.
+    ///
+    /// The returned pointer must be passed to `spatialite_init_ex` and
+    /// otherwise treated as opaque. Returns `NULL` on allocation failure.
+    pub fn spatialite_alloc_connection() -> *mut c_void;
+
+    /// Register the per-connection cache with a SQLite connection.
+    ///
+    /// `verbose != 0` enables libspatialite's stderr initialization log.
+    /// The cache is freed automatically by libspatialite when the
+    /// underlying `sqlite3_close` runs; callers must not invoke
+    /// `spatialite_cleanup_ex` themselves (doing so would double-free).
+    pub fn spatialite_init_ex(db_handle: *mut sqlite3, p_cache: *const c_void, verbose: c_int);
+
+    /// Loadable-extension entry point used by `sqlite3_load_extension`.
+    ///
+    /// This symbol is only available when libspatialite is built with
+    /// `LOADABLE_EXTENSION` (the dynamic build path). Static builds do
+    /// not export it. Most consumers should use
+    /// `rusqlite::Connection::load_extension` rather than calling this
+    /// function directly. The declaration is included for completeness.
+    pub fn sqlite3_modspatialite_init(
+        db: *mut sqlite3,
+        pz_err_msg: *mut *mut std::os::raw::c_char,
+        p_api: *const c_void,
+    ) -> c_int;
+}
