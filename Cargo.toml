@@ -13,8 +13,6 @@ categories  = ["external-ffi-bindings", "science::geo"]
 # Declare the `links` key so Cargo's duplicate-link-name detection prevents
 # multiple libspatialite copies from being statically linked into a single binary.
 links       = "spatialite"
-# Once the bundled feature lands, narrow the publish set with `include = [...]`
-# so the crates.io tarball stays under the size limit.
 exclude     = ["/.github/", "/scripts/"]
 
 [features]
@@ -24,11 +22,17 @@ exclude     = ["/.github/", "/scripts/"]
 default        = []
 
 # Build libspatialite from vendored source via `cc::Build`, statically linked
-# alongside GEOS / PROJ / zlib (pulled as build-deps when this feature is on).
-# Tested in CI on Linux and macOS. Windows MSVC has known upstream-source
-# incompatibilities; use `bundled-vcpkg` instead. Implementation lands in a
-# follow-up commit.
-bundled        = []
+# alongside GEOS / PROJ / zlib. Tested in CI on Linux and macOS. Windows MSVC
+# has known upstream-source incompatibilities (notably a `GAIAGEO_DECLARE`
+# macro expansion that hits MSVC parser error C2054 in `gg_shape.c`); use
+# `bundled-vcpkg` instead for Windows.
+bundled        = [
+    "dep:cc",
+    "dep:geos-src",
+    "dep:link-cplusplus",
+    "dep:libz-sys",
+    "dep:proj-sys",
+]
 
 # Resolve libspatialite via vcpkg (`vcpkg install libspatialite:x64-windows-static-md`)
 # for Windows MSVC. The vcpkg port carries upstream-compatibility patches that
@@ -44,6 +48,28 @@ bundled-vcpkg  = []
 # script.
 libsqlite3-sys = { version = "0.28", features = ["bundled"] }
 
+# Ensure the C++ standard library is linked when the `bundled` feature is on.
+# libspatialite itself is pure C, but it links to libgeos which is C++.
+link-cplusplus = { version = "1.0", optional = true }
+
+# libspatialite's `gg_relations.c::evalGeosCache` requires zlib's `crc32`. The
+# `static` feature builds zlib from vendored source, so the bundled spatialite
+# stack does not depend on a system zlib (matters most on Windows MSVC where
+# system zlib is absent).
+libz-sys = { version = "1", default-features = false, features = ["static"], optional = true }
+
+# Pulled in only for the `bundled` feature so that `proj-sys`'s build script
+# runs first and produces an OUT_DIR with `libproj.a` + `proj.h`. We re-discover
+# that OUT_DIR from `build.rs` because proj-sys 0.25 does not emit `cargo:include=`.
+# Linking is left to proj-sys (its `links = "proj"` declaration emits the
+# canonical `cargo:rustc-link-lib=proj`).
+proj-sys = { version = "0.25", default-features = false, features = ["bundled_proj"], optional = true }
+
 [build-dependencies]
-# Placeholder. The `bundled` and `bundled-vcpkg` feature implementations will
-# add cc / vcpkg / geos-src / proj-sys / libz-sys here.
+# Compile vendored libspatialite C source. `cc` is gated by the `bundled` feature.
+cc = { version = "1", optional = true }
+
+# Build libgeos (C/C++) for static linking with the bundled libspatialite.
+# We discover its OUT_DIR (`<build_root>/geos-src-*/out/{include,lib}`) at
+# build time because geos-src 0.2 does not emit `cargo:include=`.
+geos-src = { version = "0.2", optional = true }
