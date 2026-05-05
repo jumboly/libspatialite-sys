@@ -32,8 +32,8 @@ use libspatialite_sys::{spatialite_alloc_connection, spatialite_init_ex, spatial
 
 use libsqlite3_sys::{
     sqlite3, sqlite3_close, sqlite3_column_text, sqlite3_exec, sqlite3_finalize, sqlite3_open_v2,
-    sqlite3_prepare_v2, sqlite3_step, SQLITE_DONE, SQLITE_OK, SQLITE_OPEN_CREATE,
-    SQLITE_OPEN_MEMORY, SQLITE_OPEN_READWRITE, SQLITE_ROW,
+    sqlite3_prepare_v2, sqlite3_step, SQLITE_OK, SQLITE_OPEN_CREATE, SQLITE_OPEN_MEMORY,
+    SQLITE_OPEN_READWRITE, SQLITE_ROW,
 };
 
 static GLOBAL_INIT: Once = Once::new();
@@ -130,11 +130,6 @@ fn spatialite_version_returns_string() {
 
     let rc = unsafe { sqlite3_finalize(stmt) };
     assert_eq!(rc, SQLITE_OK);
-
-    // Suppress "unused" warning for SQLITE_DONE which we re-export above
-    // for documentation purposes (some callers may want to compare against
-    // it when extending these tests).
-    let _ = SQLITE_DONE;
 
     unsafe { sqlite3_close(db) };
 }

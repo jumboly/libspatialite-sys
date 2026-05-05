@@ -118,18 +118,21 @@ fn main() {
     //   advapi32  CryptAcquireContextW family (libcurl)
     //   crypt32   CertOpenStore / CertGetCertificateChain etc. (libcurl schannel)
     //   secur32   InitSecurityInterfaceW (libcurl curl_sspi)
-    for syslib in [
-        "ole32",
-        "shell32",
-        "iphlpapi",
-        "bcrypt",
-        "advapi32",
-        "crypt32",
-        "secur32",
-    ] {
+    for syslib in VCPKG_WIN_SYSLIBS {
         println!("cargo:rustc-link-lib=dylib={syslib}");
     }
 }
+
+#[cfg(all(feature = "bundled-vcpkg", not(feature = "bundled")))]
+const VCPKG_WIN_SYSLIBS: &[&str] = &[
+    "ole32",
+    "shell32",
+    "iphlpapi",
+    "bcrypt",
+    "advapi32",
+    "crypt32",
+    "secur32",
+];
 
 #[cfg(all(feature = "bundled", not(feature = "bundled-vcpkg")))]
 fn main() {
@@ -144,7 +147,13 @@ fn main() {
 
     // Discover the geos-src OUT_DIR so we can feed `geos_c.h` to cc::Build
     // and emit `rustc-link-search` for `libgeos*.a`.
-    let geos_root = locate_geos_root(&out_dir);
+    let geos_root = locate_dep_root(
+        &out_dir,
+        "geos-src-",
+        "include/geos_c.h",
+        "geos-src",
+        "make sure `geos-src` is declared as a build-dependency",
+    );
     println!(
         "cargo:rustc-link-search=native={}",
         geos_root.join("lib").display()
@@ -163,7 +172,13 @@ fn main() {
     // from the sibling OUT_DIR (`proj-sys` 0.25 does not emit
     // `cargo:include=`). When proj-sys eventually does emit it, replace
     // this with `std::env::var("DEP_PROJ_INCLUDE")`.
-    let proj_root = locate_proj_root(&out_dir);
+    let proj_root = locate_dep_root(
+        &out_dir,
+        "proj-sys-",
+        "include/proj.h",
+        "proj-sys",
+        "make sure the `bundled` feature pulls `proj-sys` with `bundled_proj` on",
+    );
 
     write_generated_headers(&out_dir);
 
@@ -277,36 +292,29 @@ fn main() {
     build.compile("spatialite");
 }
 
-/// Locate `<build_root>/geos-src-<hash>/out`, the cmake install prefix
-/// produced by the `geos-src` build script.
+/// Locate `<build_root>/<prefix><hash>/out`, the cmake install prefix
+/// produced by a sibling build-dependency's build script (e.g. `geos-src`,
+/// `proj-sys` with `bundled_proj`).
 ///
 /// Our own OUT_DIR is `<build_root>/libspatialite-sys-<hash>/out`. The
-/// sibling directory contains `out/include/geos_c.h` and
-/// `out/lib/libgeos_c.a`. If multiple `geos-src-*` directories exist we
-/// pick the most recently modified one.
-#[cfg(feature = "bundled")]
-fn locate_geos_root(out_dir: &std::path::Path) -> std::path::PathBuf {
-    locate_sibling_out(out_dir, "geos-src-", "include/geos_c.h").unwrap_or_else(|build_root| {
-        panic!(
-            "could not locate geos-src OUT_DIR (expected {}/geos-src-*/out/include/geos_c.h). \
-             Make sure `geos-src` is declared as a build-dependency.",
-            build_root.display()
-        )
-    })
-}
-
-/// Locate `<build_root>/proj-sys-<hash>/out`.
+/// sibling directory contains `out/include/<sentinel_rel>` plus the static
+/// archives we eventually link. If multiple `<prefix>*` directories exist
+/// we pick the most recently modified one.
 ///
-/// Same shape as `locate_geos_root`. proj-sys 0.25 does not emit
-/// `cargo:include=` / `cargo:root=`, so we cannot receive the include path
-/// via `DEP_PROJ_INCLUDE`. With the `bundled_proj` feature on, proj-sys
-/// installs `libproj.a` and `proj.h` into its OUT_DIR via cmake.
+/// Used because neither `geos-src` 0.2 nor `proj-sys` 0.25 emits
+/// `cargo:include=` / `cargo:root=`. When upstream does emit it, switch to
+/// `std::env::var("DEP_<NAME>_INCLUDE")`.
 #[cfg(feature = "bundled")]
-fn locate_proj_root(out_dir: &std::path::Path) -> std::path::PathBuf {
-    locate_sibling_out(out_dir, "proj-sys-", "include/proj.h").unwrap_or_else(|build_root| {
+fn locate_dep_root(
+    out_dir: &std::path::Path,
+    prefix: &str,
+    sentinel_rel: &str,
+    crate_name: &str,
+    hint: &str,
+) -> std::path::PathBuf {
+    locate_sibling_out(out_dir, prefix, sentinel_rel).unwrap_or_else(|build_root| {
         panic!(
-            "could not locate proj-sys OUT_DIR (expected {}/proj-sys-*/out/include/proj.h). \
-             Make sure the `bundled` feature pulls `proj-sys` with `bundled_proj` on.",
+            "could not locate {crate_name} OUT_DIR (expected {}/{prefix}*/out/{sentinel_rel}). {hint}.",
             build_root.display()
         )
     })
@@ -435,14 +443,20 @@ const EXCLUDED_C_FILES: &[&str] = &[
 fn write_generated_headers(out_dir: &std::path::Path) {
     let spatialite_dir = out_dir.join("spatialite");
     std::fs::create_dir_all(&spatialite_dir).expect("create OUT_DIR/spatialite");
-    write_if_changed(&out_dir.join("config.h"), &config_h_body());
+    write_if_changed(
+        &out_dir.join("config.h"),
+        &config_body("SPATIALITE_BUNDLED_CONFIG_H", true),
+    );
     // On Windows MSVC, libspatialite uses `#if defined(_WIN32) && !defined(__MINGW32__)`
     // to read `config-msvc.h` and `gaiaconfig-msvc.h` instead of the POSIX
     // counterparts. Empty stubs leave SPATIALITE_VERSION / OMIT_* undefined
     // and the build fails. We write near-identical bodies for both, with
-    // the POSIX-only bits (HAVE_DLFCN_H, HAVE_UNISTD_H) toggled off in the
-    // MSVC variant.
-    write_if_changed(&out_dir.join("config-msvc.h"), config_msvc_h_body());
+    // the POSIX-only bits (HAVE_DLFCN_H, HAVE_UNISTD_H, etc.) toggled off
+    // in the MSVC variant.
+    write_if_changed(
+        &out_dir.join("config-msvc.h"),
+        &config_body("SPATIALITE_BUNDLED_CONFIG_MSVC_H", false),
+    );
     write_if_changed(&spatialite_dir.join("gaiaconfig.h"), &gaiaconfig_h_body());
     write_if_changed(
         &spatialite_dir.join("gaiaconfig-msvc.h"),
@@ -460,92 +474,67 @@ fn write_if_changed(path: &std::path::Path, body: &str) {
     std::fs::write(path, body).unwrap_or_else(|e| panic!("write {} failed: {e}", path.display()));
 }
 
+/// Generate `config.h` (POSIX) or `config-msvc.h` (Windows MSVC).
+///
+/// Replacement for the `config.h` autoconf would have produced. We declare
+/// the minimum standard C + sqlite3 set assumed by libspatialite source.
+/// `include_posix` toggles the POSIX-only declarations: libspatialite's
+/// source uses `#ifdef _WIN32` to switch between `_stricmp` and
+/// `strcasecmp`, etc., so the MSVC variant simply drops these defines.
 #[cfg(feature = "bundled")]
-fn config_h_body() -> String {
-    // Replacement for the `config.h` autoconf would have produced. We
-    // declare the minimum POSIX + standard C + sqlite3 set assumed by
-    // libspatialite source on Linux / macOS.
-    r"#ifndef SPATIALITE_BUNDLED_CONFIG_H
-#define SPATIALITE_BUNDLED_CONFIG_H
+fn config_body(guard: &str, include_posix: bool) -> String {
+    use std::fmt::Write;
 
-#define HAVE_DLFCN_H 1
-#define HAVE_FCNTL_H 1
-#define HAVE_FLOAT_H 1
-#define HAVE_INTTYPES_H 1
-#define HAVE_LIMITS_H 1
-#define HAVE_LOCALE_H 1
-#define HAVE_MATH_H 1
-#define HAVE_MEMORY_H 1
-#define HAVE_STDINT_H 1
-#define HAVE_STDIO_H 1
-#define HAVE_STDLIB_H 1
-#define HAVE_STRINGS_H 1
-#define HAVE_STRING_H 1
-#define HAVE_SYS_STAT_H 1
-#define HAVE_SYS_TYPES_H 1
-#define HAVE_UNISTD_H 1
-#define HAVE_SQLITE3EXT_H 1
-#define HAVE_SQLITE3_H 1
+    // Standard C + sqlite3 headers / declarations available on both POSIX
+    // and MSVC.
+    const COMMON: &[&str] = &[
+        "HAVE_FCNTL_H",
+        "HAVE_FLOAT_H",
+        "HAVE_INTTYPES_H",
+        "HAVE_LIMITS_H",
+        "HAVE_LOCALE_H",
+        "HAVE_MATH_H",
+        "HAVE_MEMORY_H",
+        "HAVE_STDINT_H",
+        "HAVE_STDIO_H",
+        "HAVE_STDLIB_H",
+        "HAVE_STRING_H",
+        "HAVE_SYS_STAT_H",
+        "HAVE_SYS_TYPES_H",
+        "HAVE_SQLITE3EXT_H",
+        "HAVE_SQLITE3_H",
+        "HAVE_GETCWD",
+        "HAVE_GETTIMEOFDAY",
+        "HAVE_MEMMOVE",
+        "HAVE_MEMSET",
+        "HAVE_STRERROR",
+        "HAVE_DECL_SQLITE_INDEX_CONSTRAINT_LIKE",
+        "_LARGEFILE_SOURCE",
+        "NDEBUG",
+    ];
+    // POSIX-only headers and libc functions absent or named differently on
+    // MSVC.
+    const POSIX_ONLY: &[&str] = &[
+        "HAVE_DLFCN_H",
+        "HAVE_STRINGS_H",
+        "HAVE_UNISTD_H",
+        "HAVE_FDATASYNC",
+        "HAVE_FTRUNCATE",
+        "HAVE_LOCALTIME_R",
+        "HAVE_STRCASECMP",
+    ];
 
-#define HAVE_FDATASYNC 1
-#define HAVE_FTRUNCATE 1
-#define HAVE_GETCWD 1
-#define HAVE_GETTIMEOFDAY 1
-#define HAVE_LOCALTIME_R 1
-#define HAVE_MEMMOVE 1
-#define HAVE_MEMSET 1
-#define HAVE_STRCASECMP 1
-#define HAVE_STRERROR 1
-
-#define HAVE_DECL_SQLITE_INDEX_CONSTRAINT_LIKE 1
-
-#define _LARGEFILE_SOURCE 1
-#define NDEBUG 1
-
-#endif
-"
-    .to_string()
-}
-
-#[cfg(feature = "bundled")]
-fn config_msvc_h_body() -> &'static str {
-    // Windows MSVC variant. Drops POSIX-only declarations (DLFCN_H,
-    // UNISTD_H, FDATASYNC, FTRUNCATE, LOCALTIME_R, STRCASECMP) and keeps
-    // the standard C headers MSVC ships. libspatialite's source uses
-    // `#ifdef _WIN32` to switch between `_stricmp` (Windows) and
-    // `strcasecmp` (POSIX), so HAVE_STRCASECMP need not be defined here.
-    "#ifndef SPATIALITE_BUNDLED_CONFIG_MSVC_H
-#define SPATIALITE_BUNDLED_CONFIG_MSVC_H
-
-#define HAVE_FCNTL_H 1
-#define HAVE_FLOAT_H 1
-#define HAVE_INTTYPES_H 1
-#define HAVE_LIMITS_H 1
-#define HAVE_LOCALE_H 1
-#define HAVE_MATH_H 1
-#define HAVE_MEMORY_H 1
-#define HAVE_STDINT_H 1
-#define HAVE_STDIO_H 1
-#define HAVE_STDLIB_H 1
-#define HAVE_STRING_H 1
-#define HAVE_SYS_STAT_H 1
-#define HAVE_SYS_TYPES_H 1
-#define HAVE_SQLITE3EXT_H 1
-#define HAVE_SQLITE3_H 1
-
-#define HAVE_GETCWD 1
-#define HAVE_GETTIMEOFDAY 1
-#define HAVE_MEMMOVE 1
-#define HAVE_MEMSET 1
-#define HAVE_STRERROR 1
-
-#define HAVE_DECL_SQLITE_INDEX_CONSTRAINT_LIKE 1
-
-#define _LARGEFILE_SOURCE 1
-#define NDEBUG 1
-
-#endif
-"
+    let mut body = format!("#ifndef {guard}\n#define {guard}\n\n");
+    for sym in COMMON {
+        writeln!(body, "#define {sym} 1").unwrap();
+    }
+    if include_posix {
+        for sym in POSIX_ONLY {
+            writeln!(body, "#define {sym} 1").unwrap();
+        }
+    }
+    body.push_str("\n#endif\n");
+    body
 }
 
 #[cfg(feature = "bundled")]

@@ -10,10 +10,10 @@
 //!
 //! - default: declarations only. Library resolution and runtime loading are
 //!   left to the consumer.
-//! - `bundled` (added in a follow-up commit): compile the vendored
-//!   libspatialite source with `cc::Build` and statically link it.
-//! - `bundled-vcpkg` (added in a follow-up commit): resolve libspatialite
-//!   from a vcpkg installation (recommended for Windows MSVC).
+//! - `bundled`: compile the vendored libspatialite source with `cc::Build`
+//!   and statically link it.
+//! - `bundled-vcpkg`: resolve libspatialite from a vcpkg installation
+//!   (recommended for Windows MSVC).
 //!
 //! ## Static link initialization sequence
 //!
