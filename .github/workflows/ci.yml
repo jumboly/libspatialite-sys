@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Allow manual runs to revalidate the bundled smoke job after upstream
+  # toolchain image bumps without pushing a fresh commit.
+  workflow_dispatch:
+
+# Cancel any in-progress run for the same ref. Saves CI minutes when a
+# branch gets a flurry of pushes (typical during build.rs iteration).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Reduce incremental build artifact sizes; we never reuse them across runs.
+  CARGO_INCREMENTAL: "0"
+  # Surface deny-by-default warnings as build failures so silent lints don't
+  # accumulate while the crate is in pre-0.1 churn.
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Cheapest signal: make sure the default (no feature) build still parses
+  # and links a binary that just declares FFI symbols. Catches Cargo.toml
+  # / src/lib.rs syntax regressions without paying the bundled build cost.
+  default-build:
+    name: default build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --verbose
+      - run: cargo test --verbose
+
+  # Bundled smoke: the real thing. Compiles libspatialite + GEOS + PROJ +
+  # zlib from source via cc::Build (and cmake for the geos-src / proj-sys
+  # transitive crates). Linux and macOS are required-pass; Windows MSVC is
+  # currently expected to fail in libspatialite source (see README and
+  # the matrix entry below) and is kept as `continue-on-error: true` until
+  # the `bundled-vcpkg` path lands.
+  bundled-smoke:
+    name: bundled smoke (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.continue-on-error || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux
+            os: ubuntu-latest
+            install-cmd: sudo apt-get update && sudo apt-get install -y cmake pkg-config
+          - label: macos
+            os: macos-latest
+            # Apple SDK + Homebrew cmake satisfy geos-src / proj-sys.
+            install-cmd: brew install cmake
+          - label: windows
+            os: windows-latest
+            # proj-sys 0.25 cmake step requires `sqlite3.exe` on PATH to
+            # bake `proj.db`. Choco's `sqlite` package provides it.
+            install-cmd: choco install -y cmake sqlite --no-progress
+            # libspatialite 5.1.0 hits MSVC parser error C2054 around
+            # `gg_shape.c::gaia_win_fopen` via the `GAIAGEO_DECLARE` macro.
+            # The `bundled-vcpkg` feature (added in a follow-up commit) is
+            # the supported Windows path.
+            continue-on-error: true
+      max-parallel: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install build prerequisites
+        run: ${{ matrix.install-cmd }}
+        shell: bash
+      - run: cargo build --features bundled --verbose
+      - run: cargo test --features bundled --verbose

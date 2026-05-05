@@ -37,6 +37,26 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
+// The crates referenced below emit `cargo:rustc-link-lib=` directives via
+// their build scripts, but those directives are only applied to the final
+// binary when at least one Rust source file in this crate references the
+// crate. We add inert `extern crate ... as _` lines so each transitive
+// system library is forced to be linked.
+//
+// - `link_cplusplus`: pulls libstdc++ / libc++ for libgeos's C++ symbols.
+// - `proj_sys`     : pulls libproj for libspatialite's PROJ_NEW path.
+// - `libz_sys`     : pulls vendored zlib for `gg_relations.c`'s `crc32`.
+//
+// `libsqlite3_sys` is referenced from `tests/bundled_smoke.rs` and is
+// always pulled regardless of feature, so it does not need its own
+// extern-crate marker here.
+#[cfg(feature = "bundled")]
+extern crate link_cplusplus as _;
+#[cfg(feature = "bundled")]
+extern crate proj_sys as _;
+#[cfg(feature = "bundled")]
+extern crate libz_sys as _;
+
 use std::os::raw::{c_int, c_void};
 
 /// Opaque handle to a SQLite connection (`sqlite3 *`).
