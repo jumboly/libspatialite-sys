@@ -54,6 +54,192 @@ which is how libspatialite is conventionally used.
 | `bundled` | no | Build libspatialite from vendored source via `cc::Build`. Requires CMake (for transitive `geos-src` / `proj-sys`) and a C/C++ toolchain. **Linux & macOS only**; Windows MSVC has known build failures (use `bundled-vcpkg` instead). |
 | `bundled-vcpkg` | no | Resolve libspatialite via vcpkg (`vcpkg install libspatialite:x64-windows-static-md`). Recommended for Windows MSVC. Requires `VCPKG_ROOT` to be set or vcpkg to be on `PATH`. |
 
+## Usage
+
+### Quickstart with rusqlite (recommended)
+
+Most consumers want a single Rust binary that ships with libspatialite
+statically linked. Pair this crate with [`rusqlite`] using its `bundled`
+feature; both crates share a single `libsqlite3-sys` instance via
+Cargo's `links = "sqlite3"` deduplication, so only one copy of SQLite
+ends up in your binary.
+
+[`rusqlite`]: https://crates.io/crates/rusqlite
+
+**Cargo.toml**
+
+```toml
+[dependencies]
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+libspatialite-sys = { version = "0.0.1", features = ["bundled"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+libspatialite-sys = { version = "0.0.1", features = ["bundled-vcpkg"] }
+```
+
+Pin `rusqlite` to a version that depends on the same `libsqlite3-sys`
+major as this crate (currently `0.28`). Mismatched majors trigger a
+duplicate `links = "sqlite3"` error at build time — a deliberate
+safeguard against linking two SQLite copies into one binary.
+
+**Initialize a connection**
+
+When libspatialite is statically linked, the loadable-extension entry
+point is unavailable. Run the three-step bootstrap below, with
+`spatialite_initialize` guarded by `Once` so it fires only once per
+process:
+
+```rust
+use rusqlite::Connection;
+use libspatialite_sys::{
+    spatialite_alloc_connection, spatialite_init_ex, spatialite_initialize,
+};
+use std::sync::Once;
+
+static GLOBAL_INIT: Once = Once::new();
+
+fn open_with_spatialite() -> rusqlite::Result<Connection> {
+    GLOBAL_INIT.call_once(|| unsafe { spatialite_initialize() });
+
+    let conn = Connection::open_in_memory()?;
+    let raw = unsafe { conn.handle() }; // *mut libsqlite3_sys::sqlite3
+    let cache = unsafe { spatialite_alloc_connection() };
+    // libspatialite_sys::sqlite3 is layout-compatible with
+    // libsqlite3_sys::sqlite3 — both are opaque ZSTs.
+    unsafe {
+        spatialite_init_ex(raw.cast::<libspatialite_sys::sqlite3>(), cache, 0);
+    }
+    Ok(conn)
+}
+
+fn main() -> rusqlite::Result<()> {
+    let conn = open_with_spatialite()?;
+    conn.execute("SELECT InitSpatialMetadata(1)", [])?;
+    let v: String =
+        conn.query_row("SELECT spatialite_version()", [], |r| r.get(0))?;
+    println!("SpatiaLite {v}");
+    Ok(())
+}
+```
+
+> **Do not call `spatialite_cleanup_ex`.** libspatialite frees the
+> per-connection cache automatically when the underlying `sqlite3_close`
+> runs; calling cleanup explicitly would double-free.
+
+### Dynamic loading (no `bundled*` feature)
+
+If you would rather distribute `mod_spatialite.{so,dylib,dll}`
+separately and load it at runtime, depend on this crate with **no
+features**:
+
+```toml
+[dependencies]
+libspatialite-sys = "0.0.1"
+rusqlite = { version = "0.31", features = ["bundled", "load_extension"] }
+```
+
+In this mode the crate's only role is to expose FFI symbol declarations
+for users who need them; the actual load is done by rusqlite (or
+whichever SQLite binding you use):
+
+```rust
+unsafe { conn.load_extension_enable()? };
+unsafe { conn.load_extension("mod_spatialite", None)? };
+unsafe { conn.load_extension_disable()? };
+```
+
+This requires `mod_spatialite` to be present on the user's machine
+(Homebrew on macOS, `libsqlite3-mod-spatialite` on Debian / Ubuntu,
+vcpkg on Windows, etc.) and gives up the single-binary distribution
+benefit.
+
+### Local Windows development (`bundled-vcpkg`)
+
+The Windows path requires a vcpkg installation with libspatialite built
+under the `x64-windows-static-md` triplet. Use **that exact triplet** —
+it matches the default `/MD` (dynamic UCRT) ABI cargo-dist ships with;
+mixing in `x64-windows-static` (`/MT`) creates runtime ABI mismatches.
+
+**One-time setup**
+
+```pwsh
+git clone https://github.com/microsoft/vcpkg C:\vcpkg
+C:\vcpkg\bootstrap-vcpkg.bat -disableMetrics
+
+# Compiles libspatialite + GEOS + PROJ + sqlite3 + zlib from source.
+# A cold install takes ~20 minutes; subsequent rebuilds reuse the
+# cache under C:\vcpkg\installed\.
+C:\vcpkg\vcpkg.exe install libspatialite:x64-windows-static-md
+```
+
+**Per-shell environment**
+
+```pwsh
+$env:VCPKG_ROOT = "C:\vcpkg"
+$env:VCPKGRS_TRIPLET = "x64-windows-static-md"
+```
+
+To avoid setting `VCPKGRS_TRIPLET` every time, drop a
+`.cargo/config.toml` into your repo:
+
+```toml
+[env]
+VCPKGRS_TRIPLET = "x64-windows-static-md"
+```
+
+Then `cargo build --release --features bundled-vcpkg` produces a
+self-contained `.exe` with no DLL dependencies (libspatialite, GEOS,
+PROJ, SQLite, and zlib are all linked statically into the binary).
+
+### CI integration
+
+GitHub Actions Windows runners ship with a vcpkg checkout under
+`C:\vcpkg`, but a cold `vcpkg install libspatialite` takes ~20 minutes
+and the default `actions/cache` archive churn (7-day idle eviction,
+all-or-nothing tarball) makes it painful in practice. We maintain a
+companion Marketplace action,
+[`jumboly/setup-vcpkg-nuget-cache`][nugetcache], that caches each
+vcpkg port as a NuGet package on GitHub Packages, so the second-and-
+later runs install pre-built artifacts:
+
+[nugetcache]: https://github.com/marketplace/actions/setup-vcpkg-nuget-cache
+
+```yaml
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VCPKGRS_TRIPLET: x64-windows-static-md
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: jumboly/setup-vcpkg-nuget-cache@v1
+        with:
+          ports: libspatialite
+          triplet: ${{ env.VCPKGRS_TRIPLET }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - run: cargo build --release --features bundled-vcpkg
+        env:
+          VCPKG_ROOT: C:\vcpkg
+```
+
+Linux and macOS jobs need only CMake (for the transitive `geos-src` /
+`proj-sys` builds) and a working C/C++ toolchain:
+
+```yaml
+- run: sudo apt-get install -y cmake   # ubuntu
+- run: brew install cmake              # macos
+- run: cargo build --release --features bundled
+```
+
+See [`.github/workflows/ci.yml`](.github/workflows/ci.yml) for the
+in-repo reference matrix that covers all three OSes.
+
 ## Platform support matrix
 
 | Target | `default` (system) | `bundled` | `bundled-vcpkg` |
