@@ -74,9 +74,21 @@ jobs:
   # supplied by vcpkg's `libspatialite:x64-windows-static-md` port. The
   # vcpkg port carries the upstream-compatibility patches that make
   # libspatialite 5.1.0 build under MSVC.
+  #
+  # vcpkg port resolution and binary caching are delegated to
+  # jumboly/setup-vcpkg-nuget-cache, which configures vcpkg to use a
+  # GitHub Packages NuGet feed (under this repo's owner) as a
+  # persistent, per-port binary cache. Compared to the previous
+  # actions/cache approach this gives:
+  #   - per-port cache hits (vs. tarball-wide)
+  #   - survival across vcpkg HEAD updates and across job failures
+  #   - no 7-day idle eviction
   bundled-vcpkg-smoke:
     name: bundled-vcpkg smoke (windows)
     runs-on: windows-latest
+    permissions:
+      contents: read
+      packages: write
     env:
       # Match cargo-dist's `msvc-crt-static = false` (== /MD dynamic ucrt).
       # See build.rs for why we don't override the triplet from Rust code.
@@ -86,31 +98,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      # GitHub-hosted windows-latest comes with a stale vcpkg checkout
-      # under C:\vcpkg. Run `git pull` so we get current ports + triplets.
-      - name: Update bundled vcpkg checkout
-        shell: pwsh
-        run: |
-          cd C:\vcpkg
-          git pull --ff-only
-          .\bootstrap-vcpkg.bat -disableMetrics
-
-      # Restore the binary cache so subsequent runs do not rebuild
-      # libspatialite + GEOS + PROJ from scratch each time. The cache
-      # key includes the vcpkg HEAD commit so port version bumps surface
-      # as cache misses (correct behavior).
-      - name: Cache vcpkg binary archives
-        uses: actions/cache@v4
+      - name: Setup vcpkg NuGet cache and install libspatialite
+        uses: jumboly/setup-vcpkg-nuget-cache@v1
         with:
-          path: ~/AppData/Local/vcpkg/archives
-          key: vcpkg-archives-${{ runner.os }}-${{ env.VCPKGRS_TRIPLET }}-${{ hashFiles('C:/vcpkg/.git/HEAD') }}-libspatialite
-          restore-keys: |
-            vcpkg-archives-${{ runner.os }}-${{ env.VCPKGRS_TRIPLET }}-
-
-      - name: vcpkg install libspatialite
-        shell: pwsh
-        run: |
-          C:\vcpkg\vcpkg.exe install --triplet=$env:VCPKGRS_TRIPLET libspatialite
+          ports: libspatialite
+          triplet: ${{ env.VCPKGRS_TRIPLET }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: cargo build (bundled-vcpkg)
         shell: pwsh
