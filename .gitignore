@@ -6,6 +6,7 @@ Cargo.lock.bak
 .idea/
 .vscode/
 .DS_Store
+.claude/
 
 # Local vcpkg installation tree (for `bundled-vcpkg` testing)
 /vcpkg_installed/
