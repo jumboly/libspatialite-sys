@@ -1,5 +1,6 @@
 # libspatialite-sys
 
+[![CI](https://github.com/jumboly/libspatialite-sys/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jumboly/libspatialite-sys/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/libspatialite-sys.svg)](https://crates.io/crates/libspatialite-sys)
 [![docs.rs](https://docs.rs/libspatialite-sys/badge.svg)](https://docs.rs/libspatialite-sys)
 
@@ -12,9 +13,10 @@ SpatiaLite SQLite extension) for Rust.
 
 > **Status: pre-0.1, work in progress.**
 > This crate is being extracted from a real-world consumer ([shpx]) that
-> already ships libspatialite bundled on Linux / macOS. The `bundled-vcpkg`
-> path for Windows MSVC is in active development. The API surface and
-> feature flag names may change before 0.1.0 is published to crates.io.
+> already ships libspatialite bundled on Linux / macOS. All three feature
+> paths (default headers-only, `bundled`, `bundled-vcpkg`) are implemented
+> and exercised by CI. The API surface and feature flag names may still
+> change before 0.1.0 is published to crates.io.
 
 [shpx]: https://github.com/jumboly/shpx
 
@@ -25,14 +27,15 @@ SpatiaLite SQLite extension) for Rust.
   `spatialite_init_ex`) — enough for static link consumers to bootstrap
   SpatiaLite SQL functions inside a `rusqlite::Connection` (or any other
   SQLite binding using `libsqlite3-sys`).
-- (Coming) An opt-in `bundled` Cargo feature that builds libspatialite,
-  GEOS (via [`geos-src`]), PROJ (via [`proj-sys`]), and zlib (via
-  [`libz-sys`]) from source and statically links them into your binary.
-- (Coming) An opt-in `bundled-vcpkg` Cargo feature for Windows MSVC, which
-  delegates the libspatialite + dependencies build to a user-provisioned
-  vcpkg installation. This is the recommended Windows path because the
-  upstream libspatialite source has known MSVC parser incompatibilities
-  that vcpkg's port already patches.
+- An opt-in `bundled` Cargo feature that builds libspatialite, GEOS (via
+  [`geos-src`]), PROJ (via [`proj-sys`]), and zlib (via [`libz-sys`]) from
+  source and statically links them into your binary. Targets Linux and
+  macOS.
+- An opt-in `bundled-vcpkg` Cargo feature for Windows MSVC, which delegates
+  the libspatialite + dependencies build to a user-provisioned vcpkg
+  installation. This is the recommended Windows path because the upstream
+  libspatialite source has known MSVC parser incompatibilities that
+  vcpkg's port already patches.
 
 [`geos-src`]: https://crates.io/crates/geos-src
 [`proj-sys`]: https://crates.io/crates/proj-sys
@@ -59,7 +62,7 @@ which is how libspatialite is conventionally used.
 | `aarch64-unknown-linux-gnu` | ✅ pkg-config / `LD_LIBRARY_PATH` | ✅ tested in CI | (not applicable) |
 | `aarch64-apple-darwin` | ✅ Homebrew (`libspatialite`) | ✅ tested in CI | (not applicable) |
 | `x86_64-apple-darwin` | ✅ Homebrew | ✅ tested in CI | (not applicable) |
-| `x86_64-pc-windows-msvc` | ⚠️ user-provided `mod_spatialite.dll` | ❌ MSVC parser failures (use `bundled-vcpkg`) | ✅ vcpkg port (in development) |
+| `x86_64-pc-windows-msvc` | ⚠️ user-provided `mod_spatialite.dll` | ❌ MSVC parser failures (use `bundled-vcpkg`) | ✅ tested in CI |
 | `x86_64-pc-windows-gnu` | ⚠️ MSYS2 | ✅ (untested by CI) | (not applicable) |
 
 ## License

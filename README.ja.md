@@ -1,5 +1,6 @@
 # libspatialite-sys (日本語)
 
+[![CI](https://github.com/jumboly/libspatialite-sys/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jumboly/libspatialite-sys/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/libspatialite-sys.svg)](https://crates.io/crates/libspatialite-sys)
 [![docs.rs](https://docs.rs/libspatialite-sys/badge.svg)](https://docs.rs/libspatialite-sys)
 
@@ -12,9 +13,10 @@
 
 > **状態: 0.1 未満、開発中。**
 > このクレートは、Linux / macOS で libspatialite を bundle 配布している実利用者
-> ([shpx]) から切り出して整備中です。Windows MSVC 向けの `bundled-vcpkg` 経路は
-> 現在実装中。0.1.0 を crates.io に publish するまでに API 表面や feature 名が
-> 変更される可能性があります。
+> ([shpx]) から切り出して整備中です。3 つの feature 経路 (デフォルトの
+> ヘッダ宣言のみ / `bundled` / `bundled-vcpkg`) はすべて実装済みで CI でも
+> 検証しています。0.1.0 を crates.io に publish するまでに API 表面や feature
+> 名が変更される可能性があります。
 
 [shpx]: https://github.com/jumboly/shpx
 
@@ -25,13 +27,13 @@
   `spatialite_init_ex`)。`rusqlite::Connection` (あるいは `libsqlite3-sys` を
   使う任意の SQLite バインディング) と組み合わせて、static link 経由で
   SpatiaLite SQL 関数群を初期化できる。
-- (今後追加) `bundled` Cargo feature: libspatialite と GEOS ([`geos-src`])
-  / PROJ ([`proj-sys`]) / zlib ([`libz-sys`]) をソースから build し、
-  バイナリに static link する経路。
-- (今後追加) `bundled-vcpkg` Cargo feature: Windows MSVC 向けに、ユーザー側で
-  install された vcpkg installation 経由で libspatialite を解決する経路。
-  上流 libspatialite ソースには MSVC parser 非互換の既知問題があり、vcpkg port
-  が patch を当てているため、Windows ではこちらを推奨します。
+- `bundled` Cargo feature: libspatialite と GEOS ([`geos-src`]) / PROJ
+  ([`proj-sys`]) / zlib ([`libz-sys`]) をソースから build し、バイナリに
+  static link する経路。Linux / macOS が対象。
+- `bundled-vcpkg` Cargo feature: Windows MSVC 向けに、ユーザー側で install
+  された vcpkg installation 経由で libspatialite を解決する経路。上流
+  libspatialite ソースには MSVC parser 非互換の既知問題があり、vcpkg port が
+  patch を当てているため、Windows ではこちらを推奨します。
 
 [`geos-src`]: https://crates.io/crates/geos-src
 [`proj-sys`]: https://crates.io/crates/proj-sys
@@ -57,7 +59,7 @@ connection 初期化後に SQL 経由で呼び出すのが SpatiaLite の慣習�
 | `aarch64-unknown-linux-gnu` | ✅ pkg-config / `LD_LIBRARY_PATH` | ✅ CI で動作確認 | (該当なし) |
 | `aarch64-apple-darwin` | ✅ Homebrew (`libspatialite`) | ✅ CI で動作確認 | (該当なし) |
 | `x86_64-apple-darwin` | ✅ Homebrew | ✅ CI で動作確認 | (該当なし) |
-| `x86_64-pc-windows-msvc` | ⚠️ ユーザー側で `mod_spatialite.dll` を用意 | ❌ MSVC parser 非互換 (`bundled-vcpkg` を使うこと) | ✅ vcpkg port (実装中) |
+| `x86_64-pc-windows-msvc` | ⚠️ ユーザー側で `mod_spatialite.dll` を用意 | ❌ MSVC parser 非互換 (`bundled-vcpkg` を使うこと) | ✅ CI で検証 |
 | `x86_64-pc-windows-gnu` | ⚠️ MSYS2 | ✅ (CI 未検証) | (該当なし) |
 
 ## ライセンス
