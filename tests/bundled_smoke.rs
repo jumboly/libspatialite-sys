@@ -1,7 +1,8 @@
-//! End-to-end smoke test for the `bundled` feature.
+//! End-to-end smoke test shared between `bundled` and `bundled-vcpkg`.
 //!
-//! Runs only when libspatialite-sys is compiled with `--features bundled`.
-//! Exercises the full static-link initialization sequence
+//! Runs whenever libspatialite-sys is compiled with either of the static-link
+//! features (`--features bundled` on Linux/macOS, or `--features bundled-vcpkg`
+//! on Windows MSVC). Exercises the full static-link initialization sequence
 //! (`spatialite_initialize` -> `spatialite_alloc_connection` -> `spatialite_init_ex`)
 //! against a freshly-opened in-memory SQLite database, and runs two SQL
 //! statements that depend on libspatialite functionality being live in the
@@ -16,7 +17,7 @@
 //! missing symbols at link time, init function pointer mismatches, and
 //! GEOS / PROJ being absent or version-incompatible.
 
-#![cfg(feature = "bundled")]
+#![cfg(any(feature = "bundled", feature = "bundled-vcpkg"))]
 
 use std::ffi::{c_char, CStr};
 use std::ptr;

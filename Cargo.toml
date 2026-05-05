@@ -36,9 +36,11 @@ bundled        = [
 
 # Resolve libspatialite via vcpkg (`vcpkg install libspatialite:x64-windows-static-md`)
 # for Windows MSVC. The vcpkg port carries upstream-compatibility patches that
-# avoid the MSVC parser issues hit by the in-tree `bundled` path. Implementation
-# lands in a follow-up commit.
-bundled-vcpkg  = []
+# avoid the MSVC parser issues hit by the in-tree `bundled` path. vcpkg's port
+# brings its own GEOS / PROJ / sqlite3 / zlib, so this feature does NOT pull
+# the source-build crates (geos-src / proj-sys / libz-sys / link-cplusplus).
+# Mutually exclusive with `bundled`; enabling both is a build-time error.
+bundled-vcpkg  = ["dep:vcpkg"]
 
 [dependencies]
 # Forwards the SQLite header path (`sqlite3.h` / `sqlite3ext.h`) to our build.rs
@@ -73,3 +75,8 @@ cc = { version = "1", optional = true }
 # We discover its OUT_DIR (`<build_root>/geos-src-*/out/{include,lib}`) at
 # build time because geos-src 0.2 does not emit `cargo:include=`.
 geos-src = { version = "0.2", optional = true }
+
+# vcpkg integration for the `bundled-vcpkg` feature. Probes the user's vcpkg
+# installation and emits the appropriate `cargo:rustc-link-lib=` directives
+# for libspatialite + its transitive deps from the port.
+vcpkg = { version = "0.2", optional = true }

@@ -5,8 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Allow manual runs to revalidate the bundled smoke job after upstream
-  # toolchain image bumps without pushing a fresh commit.
+  # Allow manual runs to revalidate after upstream toolchain image bumps
+  # without pushing a fresh commit.
   workflow_dispatch:
 
 # Cancel any in-progress run for the same ref. Saves CI minutes when a
@@ -17,7 +17,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Reduce incremental build artifact sizes; we never reuse them across runs.
   CARGO_INCREMENTAL: "0"
   # Surface deny-by-default warnings as build failures so silent lints don't
   # accumulate while the crate is in pre-0.1 churn.
@@ -41,16 +40,15 @@ jobs:
       - run: cargo build --verbose
       - run: cargo test --verbose
 
-  # Bundled smoke: the real thing. Compiles libspatialite + GEOS + PROJ +
-  # zlib from source via cc::Build (and cmake for the geos-src / proj-sys
-  # transitive crates). Linux and macOS are required-pass; Windows MSVC is
-  # currently expected to fail in libspatialite source (see README and
-  # the matrix entry below) and is kept as `continue-on-error: true` until
-  # the `bundled-vcpkg` path lands.
+  # Source-build smoke (Linux + macOS only). Compiles libspatialite + GEOS +
+  # PROJ + zlib from source via cc::Build (and cmake for the geos-src /
+  # proj-sys transitive crates). Windows MSVC is excluded here because
+  # libspatialite 5.1.0 hits MSVC parser error C2054 around
+  # `gg_shape.c::gaia_win_fopen`; the `bundled-vcpkg` job below covers
+  # Windows.
   bundled-smoke:
     name: bundled smoke (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.continue-on-error || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -60,19 +58,7 @@ jobs:
             install-cmd: sudo apt-get update && sudo apt-get install -y cmake pkg-config
           - label: macos
             os: macos-latest
-            # Apple SDK + Homebrew cmake satisfy geos-src / proj-sys.
             install-cmd: brew install cmake
-          - label: windows
-            os: windows-latest
-            # proj-sys 0.25 cmake step requires `sqlite3.exe` on PATH to
-            # bake `proj.db`. Choco's `sqlite` package provides it.
-            install-cmd: choco install -y cmake sqlite --no-progress
-            # libspatialite 5.1.0 hits MSVC parser error C2054 around
-            # `gg_shape.c::gaia_win_fopen` via the `GAIAGEO_DECLARE` macro.
-            # The `bundled-vcpkg` feature (added in a follow-up commit) is
-            # the supported Windows path.
-            continue-on-error: true
-      max-parallel: 3
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -82,3 +68,58 @@ jobs:
         shell: bash
       - run: cargo build --features bundled --verbose
       - run: cargo test --features bundled --verbose
+
+  # Windows MSVC bundled smoke via vcpkg. Compiles a single shpx.exe that
+  # statically links libspatialite + GEOS + PROJ + sqlite3 + zlib all
+  # supplied by vcpkg's `libspatialite:x64-windows-static-md` port. The
+  # vcpkg port carries the upstream-compatibility patches that make
+  # libspatialite 5.1.0 build under MSVC.
+  bundled-vcpkg-smoke:
+    name: bundled-vcpkg smoke (windows)
+    runs-on: windows-latest
+    env:
+      # Match cargo-dist's `msvc-crt-static = false` (== /MD dynamic ucrt).
+      # See build.rs for why we don't override the triplet from Rust code.
+      VCPKGRS_TRIPLET: x64-windows-static-md
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # GitHub-hosted windows-latest comes with a stale vcpkg checkout
+      # under C:\vcpkg. Run `git pull` so we get current ports + triplets.
+      - name: Update bundled vcpkg checkout
+        shell: pwsh
+        run: |
+          cd C:\vcpkg
+          git pull --ff-only
+          .\bootstrap-vcpkg.bat -disableMetrics
+
+      # Restore the binary cache so subsequent runs do not rebuild
+      # libspatialite + GEOS + PROJ from scratch each time. The cache
+      # key includes the vcpkg HEAD commit so port version bumps surface
+      # as cache misses (correct behavior).
+      - name: Cache vcpkg binary archives
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/vcpkg/archives
+          key: vcpkg-archives-${{ runner.os }}-${{ env.VCPKGRS_TRIPLET }}-${{ hashFiles('C:/vcpkg/.git/HEAD') }}-libspatialite
+          restore-keys: |
+            vcpkg-archives-${{ runner.os }}-${{ env.VCPKGRS_TRIPLET }}-
+
+      - name: vcpkg install libspatialite
+        shell: pwsh
+        run: |
+          C:\vcpkg\vcpkg.exe install --triplet=$env:VCPKGRS_TRIPLET libspatialite
+
+      - name: cargo build (bundled-vcpkg)
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: cargo build --features bundled-vcpkg --verbose
+
+      - name: cargo test (bundled-vcpkg)
+        shell: pwsh
+        env:
+          VCPKG_ROOT: C:\vcpkg
+        run: cargo test --features bundled-vcpkg --verbose

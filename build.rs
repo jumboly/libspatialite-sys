@@ -8,10 +8,16 @@
 //! - `bundled`: compiles vendored libspatialite source via `cc::Build` and
 //!   statically links it together with GEOS (via `geos-src`), PROJ (via
 //!   `proj-sys`), and zlib (via `libz-sys`). Tested on Linux and macOS.
-//! - `bundled-vcpkg` (added in a follow-up commit): resolves libspatialite
-//!   from a vcpkg installation; recommended for Windows MSVC.
+//! - `bundled-vcpkg`: resolves libspatialite via `vcpkg::Config::find_package`,
+//!   which emits link directives for the libspatialite port plus its
+//!   transitive deps (GEOS / PROJ / sqlite3 / zlib). Recommended for Windows
+//!   MSVC; the vcpkg port carries upstream-compatibility patches that avoid
+//!   the MSVC parser failures hit by the in-tree `bundled` path.
 //!
-//! ## Header path resolution
+//! `bundled` and `bundled-vcpkg` are mutually exclusive; enabling both is a
+//! build-time error.
+//!
+//! ## Header path resolution (`bundled` only)
 //!
 //! - `sqlite3.h` / `sqlite3ext.h`: from `libsqlite3-sys` (which declares
 //!   `links = "sqlite3"` and exposes `DEP_SQLITE3_INCLUDE`).
@@ -23,28 +29,80 @@
 //!   start emitting `cargo:include=`, the helpers can be replaced with
 //!   `std::env::var("DEP_GEOS_INCLUDE")` / `DEP_PROJ_INCLUDE`.
 //!
-//! ## Link emission policy
+//! ## Link emission policy (`bundled` only)
 //!
 //! - GEOS (`libgeos_c`, `libgeos`): emitted by this script (`cargo:rustc-link-lib=static=geos_c`
 //!   followed by `static=geos`; `geos-src` 0.2 does not emit them itself).
 //! - PROJ (`libproj`): NOT emitted by this script. `proj-sys` declares
-//!   `links = "proj"` and emits the canonical link directive on its own;
-//!   duplicating it would surface as `cargo:rustc-link-lib=proj` twice and
-//!   could surprise users.
+//!   `links = "proj"` and emits the canonical link directive on its own.
 //! - zlib (`libz`): emitted by this script (`static=z`). `libz-sys`'s
 //!   `static` feature builds vendored zlib but does not emit a link directive
 //!   on its own when the consumer (us) does not explicitly reference any
-//!   zlib symbol from Rust — and we don't, since libspatialite calls
-//!   `crc32` purely from C.
+//!   zlib symbol from Rust.
 
-#[cfg(not(feature = "bundled"))]
+#[cfg(all(feature = "bundled", feature = "bundled-vcpkg"))]
+compile_error!(
+    "features `bundled` and `bundled-vcpkg` are mutually exclusive; pick exactly one"
+);
+
+// Stub `main` for the impossible both-features-on configuration. Rust still
+// requires a `main` to exist in build.rs even when `compile_error!` fires;
+// without this stub the user sees a confusing "main function not found"
+// error after the real compile_error message.
+#[cfg(all(feature = "bundled", feature = "bundled-vcpkg"))]
+fn main() {}
+
+#[cfg(not(any(feature = "bundled", feature = "bundled-vcpkg")))]
 fn main() {
-    // Re-run only when this script changes; vendored source edits are
-    // irrelevant in the no-feature build path.
+    // Default build: emit nothing. The consumer manages library resolution.
     println!("cargo:rerun-if-changed=build.rs");
 }
 
-#[cfg(feature = "bundled")]
+#[cfg(all(feature = "bundled-vcpkg", not(feature = "bundled")))]
+fn main() {
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=VCPKG_ROOT");
+    println!("cargo:rerun-if-env-changed=VCPKG_INSTALLATION_ROOT");
+    println!("cargo:rerun-if-env-changed=VCPKGRS_TRIPLET");
+    println!("cargo:rerun-if-env-changed=VCPKGRS_DYNAMIC");
+
+    // Triplet selection: callers MUST set `VCPKGRS_TRIPLET=x64-windows-static-md`
+    // (or its target-arch counterpart). Default triplet selection in the
+    // `vcpkg` crate v0.2 picks `x64-windows-static` (MSVC `/MT` static CRT)
+    // on Windows MSVC when `RUSTFLAGS=-C target-feature=+crt-static` is set,
+    // and `x64-windows` otherwise. Neither default is what we want for
+    // a cargo-dist-style Windows release (which uses `msvc-crt-static = false`
+    // and therefore links to the `/MD` dynamic ucrt). The `-static-md`
+    // triplet builds vcpkg ports as static libs that link against `/MD`,
+    // which is the correct match. We don't override the triplet
+    // programmatically here because target-arch selection (x64 / arm64)
+    // is best left to the env-var path.
+    let lib = vcpkg::find_package("libspatialite").unwrap_or_else(|err| {
+        panic!(
+            "vcpkg::find_package(\"libspatialite\") failed: {err}\n\
+             Required setup:\n  \
+               1. Install vcpkg and set VCPKG_ROOT (or VCPKG_INSTALLATION_ROOT).\n  \
+               2. Install the port:\n        \
+                    vcpkg install libspatialite:x64-windows-static-md\n  \
+               3. Build with:\n        \
+                    VCPKGRS_TRIPLET=x64-windows-static-md cargo build --features bundled-vcpkg\n  \
+             See README.md for the full Windows MSVC setup."
+        )
+    });
+
+    // The `vcpkg` crate emits its own `cargo:rustc-link-search` /
+    // `cargo:rustc-link-lib` directives via cargo_metadata, so we don't
+    // need to do anything else here. The returned `Library` is mostly
+    // informational — we print a brief summary so CI logs make it obvious
+    // which port files were picked up.
+    eprintln!(
+        "libspatialite-sys: vcpkg resolved libspatialite ({} libraries, {} include paths)",
+        lib.found_libs.len(),
+        lib.include_paths.len()
+    );
+}
+
+#[cfg(all(feature = "bundled", not(feature = "bundled-vcpkg")))]
 fn main() {
     use std::path::PathBuf;
 

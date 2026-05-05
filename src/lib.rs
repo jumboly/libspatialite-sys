@@ -47,6 +47,13 @@
 // - `proj_sys`     : pulls libproj for libspatialite's PROJ_NEW path.
 // - `libz_sys`     : pulls vendored zlib for `gg_relations.c`'s `crc32`.
 //
+// These are only needed for the source-build path (`bundled`); when
+// `bundled-vcpkg` is on, vcpkg's port brings its own GEOS / PROJ / zlib
+// and emits all the necessary link directives via the `vcpkg` crate's
+// build.rs (called from our own build.rs). MSVC's linker pulls the C++
+// runtime automatically, so `link-cplusplus` is unnecessary on the vcpkg
+// path too.
+//
 // `libsqlite3_sys` is referenced from `tests/bundled_smoke.rs` and is
 // always pulled regardless of feature, so it does not need its own
 // extern-crate marker here.
