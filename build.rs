@@ -100,6 +100,35 @@ fn main() {
         lib.found_libs.len(),
         lib.include_paths.len()
     );
+
+    // Windows system libraries pulled in transitively by the vcpkg ports
+    // (proj, libcurl, libxml2). The `libspatialite` vcpkg port's `usage`
+    // file does not advertise these, so `vcpkg::find_package` does not
+    // emit them via cargo_metadata. The downstream rlib build succeeds
+    // because rlibs are archives (no link step), but any consumer binary
+    // — including `cargo test` integration tests — fails at link time
+    // with LNK2019 unresolved external references unless we list them
+    // here.
+    //
+    // Symbol → system library mapping observed in CI failures:
+    //   ole32     CoTaskMemFree (proj)
+    //   shell32   SHGetKnownFolderPath (proj)
+    //   iphlpapi  if_nametoindex (libcurl)
+    //   bcrypt    BCryptGenRandom (libcurl, libxml2)
+    //   advapi32  CryptAcquireContextW family (libcurl)
+    //   crypt32   CertOpenStore / CertGetCertificateChain etc. (libcurl schannel)
+    //   secur32   InitSecurityInterfaceW (libcurl curl_sspi)
+    for syslib in [
+        "ole32",
+        "shell32",
+        "iphlpapi",
+        "bcrypt",
+        "advapi32",
+        "crypt32",
+        "secur32",
+    ] {
+        println!("cargo:rustc-link-lib=dylib={syslib}");
+    }
 }
 
 #[cfg(all(feature = "bundled", not(feature = "bundled-vcpkg")))]
